@@ -55,7 +55,31 @@ def send_email_alert(cpu_usage):
         log_message(f'Failed to send email: {e}')
         print(f'Failed to send email: {e}')
 
+# New Function to send email alert using Amazon SES
+def send_email_alert_ses(cpu_usage):
+    subject = 'CPU Usage Alert via SES!'
+    body = f'Warning: CPU usage is at {cpu_usage}%.'
 
+    client = boto3.client('ses', region_name=AWS_REGION)
+
+    try:
+        response = client.seMONITOR_INTERVALnd_email(
+            Source=EMAIL_ADDRESS,
+            Destination={
+                'ToAddresses': [RECIPIENT_EMAIL]
+            },
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {
+                    'Text': {'Data': body}
+                }
+            }
+        )
+        log_message(f'SES Alert sent to {RECIPIENT_EMAIL}, Message ID: {response["MessageId"]}')
+        print(f'SES Alert sent to {RECIPIENT_EMAIL}, Message ID: {response["MessageId"]}')
+    except (BotoCoreError, ClientError) as e:
+        log_message(f'Failed to send SES email: {e}')
+        print(f'Failed to send SES email: {e}')
 
 # Monitoring loop
 while True:
