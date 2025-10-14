@@ -36,4 +36,28 @@ Each script aims to automate or explore a specific operational task — such as 
 > Each folder contains example scripts and README or header comments describing configuration and usage.
 
 
+## Requirements
+
+- Python 3.10+
+- `pip` (or `pipenv`)
+- `virtualenv` recommended
+- Optional: `kubectl`, `awscli`, or other external CLIs if you run integration scripts
+
+## Setup & Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Adhito/learning-sre-scripts-python.git
+   cd learning-sre-scripts-python
+   ```
+2. Create and activate a virtual environment (If neccessary):
+   ```bash
+    python -m venv venv
+    source venv/bin/activate    # macOS/Linux
+    venv\Scripts\activate       # Windows
+   ```
+3. Install dependencies:
+   ```bash
+    pip install -r requirements.txt
+   ```
 
