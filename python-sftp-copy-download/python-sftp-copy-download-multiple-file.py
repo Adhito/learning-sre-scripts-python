@@ -3,6 +3,7 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional, List
+from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(
@@ -219,6 +220,112 @@ class SFTPClient:
             logger.error(f"Failed to list directory: {e}")
             return None
     
+    def is_directory(self, remote_path: str) -> bool:
+        """
+        Check if a remote path is a directory
+        
+        Args:
+            remote_path: Path to check
+            
+        Returns:
+            bool: True if directory, False otherwise
+        """
+        try:
+            import stat
+            file_stat = self.sftp.stat(remote_path)
+            return stat.S_ISDIR(file_stat.st_mode)
+        except Exception as e:
+            logger.error(f"Error checking if path is directory: {e}")
+            return False
+    
+    def download_directory(self, remote_dir: str, local_dir: str) -> bool:
+        """
+        Recursively download an entire directory
+        
+        Args:
+            remote_dir: Path to remote directory
+            local_dir: Path to local directory
+            
+        Returns:
+            bool: True if download successful, False otherwise
+        """
+        try:
+            # Create local directory
+            Path(local_dir).mkdir(parents=True, exist_ok=True)
+            logger.info(f"Downloading directory {remote_dir} to {local_dir}...")
+            
+            # List all items in remote directory
+            items = self.sftp.listdir_attr(remote_dir)
+            
+            for item in items:
+                remote_item_path = os.path.join(remote_dir, item.filename).replace("\\", "/")
+                local_item_path = os.path.join(local_dir, item.filename)
+                
+                # Check if item is a directory
+                import stat
+                if stat.S_ISDIR(item.st_mode):
+                    # Recursively download subdirectory
+                    self.download_directory(remote_item_path, local_item_path)
+                else:
+                    # Download file
+                    logger.info(f"  Downloading file: {item.filename}")
+                    self.sftp.get(remote_item_path, local_item_path)
+            
+            logger.info(f"Directory downloaded successfully to {local_dir}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to download directory: {e}")
+            return False
+    
+    def download_with_wildcard(self, remote_pattern: str, local_dir: str) -> bool:
+        """
+        Download multiple files matching a pattern
+        
+        Args:
+            remote_pattern: Pattern like "/path/to/*.txt"
+            local_dir: Directory to save files
+            
+        Returns:
+            bool: True if at least one file downloaded
+        """
+        try:
+            import fnmatch
+            
+            # Split pattern into directory and filename pattern
+            remote_dir = os.path.dirname(remote_pattern)
+            pattern = os.path.basename(remote_pattern)
+            
+            # Create local directory
+            Path(local_dir).mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Searching for files matching: {remote_pattern}")
+            
+            # List files in remote directory
+            files = self.sftp.listdir(remote_dir)
+            matched_files = [f for f in files if fnmatch.fnmatch(f, pattern)]
+            
+            if not matched_files:
+                logger.warning(f"No files matched pattern: {remote_pattern}")
+                return False
+            
+            logger.info(f"Found {len(matched_files)} matching files")
+            
+            # Download each matched file
+            success_count = 0
+            for filename in matched_files:
+                remote_path = os.path.join(remote_dir, filename).replace("\\", "/")
+                local_path = os.path.join(local_dir, filename)
+                
+                if self.download_file(remote_path, local_path):
+                    success_count += 1
+            
+            logger.info(f"Downloaded {success_count}/{len(matched_files)} files")
+            return success_count > 0
+            
+        except Exception as e:
+            logger.error(f"Wildcard download failed: {e}")
+            return False
     def file_exists(self, remote_path: str) -> bool:
         """
         Check if a file exists on the server
@@ -237,6 +344,51 @@ class SFTPClient:
         except Exception as e:
             logger.error(f"Error checking file existence: {e}")
             return False
+    
+    def download_items(self, download_list: List[tuple]) -> dict:
+        """
+        Download multiple files/folders from a list
+        
+        Args:
+            download_list: List of tuples (remote_path, local_path)
+            
+        Returns:
+            dict: Statistics of downloads (success, failed, total)
+        """
+        stats = {"success": 0, "failed": 0, "total": len(download_list)}
+        
+        for idx, (remote_path, local_path) in enumerate(download_list, 1):
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Processing item {idx}/{stats['total']}")
+            logger.info(f"{'='*60}")
+            
+            try:
+                # Check if remote path exists
+                if not self.file_exists(remote_path):
+                    logger.error(f"Remote path does not exist: {remote_path}")
+                    stats["failed"] += 1
+                    continue
+                
+                # Check if it's a wildcard pattern
+                if '*' in remote_path or '?' in remote_path:
+                    success = self.download_with_wildcard(remote_path, local_path)
+                # Check if it's a directory
+                elif self.is_directory(remote_path):
+                    success = self.download_directory(remote_path, local_path)
+                # It's a file
+                else:
+                    success = self.download_file(remote_path, local_path)
+                
+                if success:
+                    stats["success"] += 1
+                else:
+                    stats["failed"] += 1
+                    
+            except Exception as e:
+                logger.error(f"Error processing {remote_path}: {e}")
+                stats["failed"] += 1
+        
+        return stats
 
 
 # ============================================================================
@@ -244,7 +396,7 @@ class SFTPClient:
 # ============================================================================
 
 def main():
-    """Main function to download file from SFTP server"""
+    """Main function to download file(s) from SFTP server"""
     
     # Create SFTP client
     client = SFTPClient(
@@ -262,18 +414,36 @@ def main():
             logger.error("Failed to establish connection")
             return
         
-        # Check if remote file exists
-        if not client.file_exists(REMOTE_FILE_PATH):
-            logger.error(f"Remote file does not exist: {REMOTE_FILE_PATH}")
-            return
+        # Multiple files/folders mode
+        if USE_DOWNLOAD_LIST:
+            logger.info(f"Starting download of {len(DOWNLOAD_LIST)} items...")
+            stats = client.download_items(DOWNLOAD_LIST)
+            
+            logger.info(f"\n{'='*60}")
+            logger.info("DOWNLOAD SUMMARY")
+            logger.info(f"{'='*60}")
+            logger.info(f"Total items: {stats['total']}")
+            logger.info(f"Successful: {stats['success']}")
+            logger.info(f"Failed: {stats['failed']}")
+            logger.info(f"{'='*60}")
         
-        # Download file
-        success = client.download_file(REMOTE_FILE_PATH, LOCAL_DOWNLOAD_PATH)
-        
-        if success:
-            logger.info("File transfer completed successfully!")
+        # Single file mode
         else:
-            logger.error("File transfer failed")
+            # Check if remote file exists
+            if not client.file_exists(REMOTE_FILE_PATH):
+                logger.error(f"Remote file does not exist: {REMOTE_FILE_PATH}")
+                return
+            
+            # Check if it's a directory or file
+            if client.is_directory(REMOTE_FILE_PATH):
+                success = client.download_directory(REMOTE_FILE_PATH, LOCAL_DOWNLOAD_PATH)
+            else:
+                success = client.download_file(REMOTE_FILE_PATH, LOCAL_DOWNLOAD_PATH)
+            
+            if success:
+                logger.info("File transfer completed successfully!")
+            else:
+                logger.error("File transfer failed")
     
     finally:
         # Always disconnect
