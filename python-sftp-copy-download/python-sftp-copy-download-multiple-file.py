@@ -22,17 +22,53 @@ SFTP_USERNAME = "your_username"
 SFTP_PASSWORD = "your_password"  # Use SSH key authentication in production
 SFTP_PRIVATE_KEY_PATH = None  # Path to private key file (optional)
 
+# ============================================================================
+# DATE CONFIGURATION
+# ============================================================================
+
+# Set the date for downloads
+# Options:
+#   "today"           - Use current date
+#   "yesterday"       - Use yesterday's date
+#   "tomorrow"        - Use tomorrow's date
+#   "+N"              - N days from today (e.g., "+3" for 3 days from now)
+#   "-N"              - N days before today (e.g., "-5" for 5 days ago)
+#   "2025-10-14"      - Specific date in YYYY-MM-DD format
+DOWNLOAD_DATE = "today"
+
+# Date format for folder names (YYYY-MM-DD by default)
+# Can be changed to other formats like "%Y%m%d", "%d-%m-%Y", etc.
+DATE_FORMAT = "%Y-%m-%d"
+
+# Base download directory (date folder will be created inside)
+BASE_DOWNLOAD_DIR = "./downloads"
+
+# ============================================================================
+# FILE/FOLDER CONFIGURATION
+# ============================================================================
+
 # Single file download (legacy support)
+# Note: {date} placeholder will be replaced with the actual date
 REMOTE_FILE_PATH = "/home/sftpuser/Laporan_10_2025_Part_01.txt"
-LOCAL_DOWNLOAD_PATH = "./Laporan_10_2025_Part_01.txt"
+LOCAL_DOWNLOAD_PATH = None  # Will be auto-generated based on date if None
 
 # Multiple files/folders configuration
 # Format: List of tuples (remote_path, local_path)
+# Use {date} placeholder in paths for dynamic date replacement
+# Use {date:format} for custom date formats (e.g., {date:%Y%m%d})
 DOWNLOAD_LIST = [
-    ("/home/sftpuser/Laporan_10_2025_Part_01.txt", "./downloads/Laporan_10_2025_Part_01.txt"),
-    ("/home/sftpuser/Laporan_10_2025_Part_02.txt", "./downloads/Laporan_10_2025_Part_02.txt"),
-    ("/home/sftpuser/reports/", "./downloads/reports/"),  # Download entire folder
-    ("/home/sftpuser/data/file.csv", "./downloads/data.csv"),
+    # Example: Files with date in filename (preserving original filename)
+    ("/home/sftpuser/Laporan_{date:%m_%Y}_Part_01.txt", "{date}/Laporan_{date:%m_%Y}_Part_01.txt"),
+    ("/home/sftpuser/Laporan_{date:%m_%Y}_Part_02.txt", "{date}/Laporan_{date:%m_%Y}_Part_02.txt"),
+    
+    # Example: Folder with date
+    ("/home/sftpuser/folder_reports/{date}/", "{date}/folder_reports/"),
+    
+    # Example: Wildcard with date
+    ("/home/sftpuser/folder_logs/log_{date:%Y%m%d}*.txt", "{date}/folder_logs/"),
+    
+    # Example: Without date placeholder (static paths)
+    ("/home/sftpuser/config.json", "{date}/config.json"),
 ]
 
 # Set to True to use DOWNLOAD_LIST, False to use single file mode
@@ -40,6 +76,70 @@ USE_DOWNLOAD_LIST = False
 
 # Connection timeout in seconds
 CONNECTION_TIMEOUT = 30
+
+
+# ============================================================================
+# DATE HELPER FUNCTIONS
+# ============================================================================
+
+def parse_date_config(date_config: str) -> datetime:
+    """
+    Parse date configuration string to datetime object
+    
+    Args:
+        date_config: Date string (today, yesterday, tomorrow, +N, -N, or YYYY-MM-DD)
+        
+    Returns:
+        datetime object
+    """
+    today = datetime.now()
+    
+    if date_config.lower() == "today":
+        return today
+    elif date_config.lower() == "yesterday":
+        return today - timedelta(days=1)
+    elif date_config.lower() == "tomorrow":
+        return today + timedelta(days=1)
+    elif date_config.startswith("+"):
+        days = int(date_config[1:])
+        return today + timedelta(days=days)
+    elif date_config.startswith("-"):
+        days = int(date_config[1:])
+        return today - timedelta(days=days)
+    else:
+        # Try to parse as specific date
+        try:
+            return datetime.strptime(date_config, "%Y-%m-%d")
+        except ValueError:
+            logger.error(f"Invalid date format: {date_config}")
+            return today
+
+
+def format_path_with_date(path: str, target_date: datetime) -> str:
+    """
+    Replace date placeholders in path with actual date
+    
+    Args:
+        path: Path string with {date} or {date:format} placeholders
+        target_date: datetime object to use for replacement
+        
+    Returns:
+        Path with date placeholders replaced
+    """
+    import re
+    
+    # Handle {date:format} pattern (including % symbols and special chars)
+    def replace_custom_format(match):
+        format_str = match.group(1)
+        return target_date.strftime(format_str)
+    
+    # Updated regex to properly capture format strings with % and other chars
+    path = re.sub(r'\{date:(.*?)\}', replace_custom_format, path)
+    
+    # Handle simple {date} pattern
+    path = path.replace("{date}", target_date.strftime(DATE_FORMAT))
+    
+    return path
 
 
 # ============================================================================
@@ -398,6 +498,17 @@ class SFTPClient:
 def main():
     """Main function to download file(s) from SFTP server"""
     
+    # Parse target date
+    target_date = parse_date_config(DOWNLOAD_DATE)
+    date_str = target_date.strftime(DATE_FORMAT)
+    
+    logger.info(f"{'='*60}")
+    logger.info(f"SFTP Download Script Started")
+    logger.info(f"{'='*60}")
+    logger.info(f"Target Date: {date_str}")
+    logger.info(f"Date Config: {DOWNLOAD_DATE}")
+    logger.info(f"{'='*60}\n")
+    
     # Create SFTP client
     client = SFTPClient(
         host=SFTP_HOST,
@@ -416,12 +527,31 @@ def main():
         
         # Multiple files/folders mode
         if USE_DOWNLOAD_LIST:
-            logger.info(f"Starting download of {len(DOWNLOAD_LIST)} items...")
-            stats = client.download_items(DOWNLOAD_LIST)
+            # Process download list with date replacements
+            processed_list = []
+            for remote_path, local_path in DOWNLOAD_LIST:
+                remote_processed = format_path_with_date(remote_path, target_date)
+                
+                # Handle local path
+                if local_path.startswith("{date}"):
+                    # Replace {date} with BASE_DOWNLOAD_DIR/date_folder
+                    local_processed = local_path.replace("{date}", 
+                                                         os.path.join(BASE_DOWNLOAD_DIR, date_str))
+                else:
+                    local_processed = format_path_with_date(local_path, target_date)
+                    # Prepend base directory if not absolute path
+                    if not os.path.isabs(local_processed):
+                        local_processed = os.path.join(BASE_DOWNLOAD_DIR, date_str, local_processed)
+                
+                processed_list.append((remote_processed, local_processed))
+            
+            logger.info(f"Starting download of {len(processed_list)} items...")
+            stats = client.download_items(processed_list)
             
             logger.info(f"\n{'='*60}")
             logger.info("DOWNLOAD SUMMARY")
             logger.info(f"{'='*60}")
+            logger.info(f"Date: {date_str}")
             logger.info(f"Total items: {stats['total']}")
             logger.info(f"Successful: {stats['success']}")
             logger.info(f"Failed: {stats['failed']}")
@@ -429,19 +559,36 @@ def main():
         
         # Single file mode
         else:
+            # Process remote path with date
+            remote_path_processed = format_path_with_date(REMOTE_FILE_PATH, target_date)
+            
+            # Process or generate local path
+            if LOCAL_DOWNLOAD_PATH:
+                local_path_processed = format_path_with_date(LOCAL_DOWNLOAD_PATH, target_date)
+            else:
+                # Auto-generate: BASE_DOWNLOAD_DIR/YYYY-MM-DD/filename
+                filename = os.path.basename(remote_path_processed)
+                local_path_processed = os.path.join(BASE_DOWNLOAD_DIR, date_str, filename)
+            
+            logger.info(f"Remote path: {remote_path_processed}")
+            logger.info(f"Local path: {local_path_processed}\n")
+            
             # Check if remote file exists
-            if not client.file_exists(REMOTE_FILE_PATH):
-                logger.error(f"Remote file does not exist: {REMOTE_FILE_PATH}")
+            if not client.file_exists(remote_path_processed):
+                logger.error(f"Remote file does not exist: {remote_path_processed}")
                 return
             
             # Check if it's a directory or file
-            if client.is_directory(REMOTE_FILE_PATH):
-                success = client.download_directory(REMOTE_FILE_PATH, LOCAL_DOWNLOAD_PATH)
+            if client.is_directory(remote_path_processed):
+                success = client.download_directory(remote_path_processed, local_path_processed)
             else:
-                success = client.download_file(REMOTE_FILE_PATH, LOCAL_DOWNLOAD_PATH)
+                success = client.download_file(remote_path_processed, local_path_processed)
             
             if success:
+                logger.info("\n" + "="*60)
                 logger.info("File transfer completed successfully!")
+                logger.info(f"Date: {date_str}")
+                logger.info("="*60)
             else:
                 logger.error("File transfer failed")
     
