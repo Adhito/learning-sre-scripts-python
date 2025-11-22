@@ -532,13 +532,14 @@ def main():
             for remote_path, local_path in DOWNLOAD_LIST:
                 remote_processed = format_path_with_date(remote_path, target_date)
                 
-                # Handle local path
-                if local_path.startswith("{date}"):
-                    # Replace {date} with BASE_DOWNLOAD_DIR/date_folder
-                    local_processed = local_path.replace("{date}", 
-                                                         os.path.join(BASE_DOWNLOAD_DIR, date_str))
+                # Handle local path - format BEFORE adding base directory
+                local_processed = format_path_with_date(local_path, target_date)
+                
+                # Now handle base directory
+                if local_processed.startswith(date_str + "/") or local_processed.startswith(date_str + "\\"):
+                    # Remove date prefix and prepend BASE_DOWNLOAD_DIR/date_folder
+                    local_processed = os.path.join(BASE_DOWNLOAD_DIR, local_processed)
                 else:
-                    local_processed = format_path_with_date(local_path, target_date)
                     # Prepend base directory if not absolute path
                     if not os.path.isabs(local_processed):
                         local_processed = os.path.join(BASE_DOWNLOAD_DIR, date_str, local_processed)
