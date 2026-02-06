@@ -1,0 +1,19 @@
+# Database Backup Query to Object Storage - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Database adapters
+psycopg2-binary>=2.9.9          # PostgreSQL adapter (binary for easy installation)
+mysql-connector-python>=8.3.0   # MySQL adapter
+
+# Object storage
+boto3>=1.34.0                   # AWS SDK for S3-compatible storage (MinIO, AWS S3, GCP, etc.)
+
+# PGP/GPG encryption
+python-gnupg>=0.5.2             # GPG wrapper for symmetric encryption
+
+
+# ============================================================================
+# Development dependencies (optional)
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
+# ============================================================================
+# See requirements-dev.txt for development tools
